@@ -1,0 +1,23 @@
+# macOS System Files
+.DS_Store
+
+# Python & Jupyter Cache
+__pycache__/
+*.py[cod]
+.ipynb_checkpoints/
+.env
+venv/
+.venv/
+env/
+
+# Datasets & Weight Models
+dataset/
+data/
+images/
+*.zip
+*.h5
+*.pt
+*.pth
+*.onnx
+*.safetensors
+*.pkl
