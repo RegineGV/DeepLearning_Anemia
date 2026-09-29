@@ -40,4 +40,4 @@ WHO_FEMALE_THRESHOLD = 12.0
 WHO_CHILD_THRESHOLD = 11.0  # For pediatric datasets like CP-AnemiC
 
 # Supported Modalities
-MODALITIES = ["conjunctiva", "palm", "fingernail"]
+MODALITIES = ["conjunctiva", "cp_anemic", "palm", "fingernail"]

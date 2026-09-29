@@ -12,7 +12,7 @@ env/
 
 # Datasets & Weight Models
 dataset/
-data/
+/data/
 images/
 *.zip
 *.h5

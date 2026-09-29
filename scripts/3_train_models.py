@@ -20,7 +20,7 @@ from src.config import (
 )
 from src.utils.seed import set_seed
 from src.models.efficientnet_cbam import EfficientNetB0_CBAM
-from src.data.dataset import ConjunctivaDataset
+from src.data.dataset import get_dataset
 from src.training.trainer import ModelTrainer, get_device
 from src.evaluation.metrics import print_metrics_table
 
@@ -29,14 +29,9 @@ def train_modality(modality: str, epochs: int = NUM_EPOCHS, batch_size: int = BA
     device = get_device()
     print(f"Executing on hardware device: {device}")
 
-    if modality == "conjunctiva":
-        train_ds = ConjunctivaDataset(split="train", use_palpebral_crop=True)
-        val_ds = ConjunctivaDataset(split="val", use_palpebral_crop=True)
-        test_ds = ConjunctivaDataset(split="test", use_palpebral_crop=True)
-    elif modality in ["palm", "fingernail"]:
-        raise NotImplementedError(f"Modality '{modality}' datasets are pending acquisition.")
-    else:
-        raise ValueError(f"Unknown modality: {modality}")
+    train_ds = get_dataset(modality, split="train")
+    val_ds = get_dataset(modality, split="val")
+    test_ds = get_dataset(modality, split="test")
 
     train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True, num_workers=NUM_WORKERS)
     val_loader = DataLoader(val_ds, batch_size=batch_size, shuffle=False, num_workers=NUM_WORKERS)
@@ -72,7 +67,7 @@ def train_modality(modality: str, epochs: int = NUM_EPOCHS, batch_size: int = BA
 
 def main():
     parser = argparse.ArgumentParser(description="Train Independent Modality Model (EfficientNet-B0 + CBAM)")
-    parser.add_argument("--modality", type=str, default="conjunctiva", choices=["conjunctiva", "palm", "fingernail"])
+    parser.add_argument("--modality", type=str, default="conjunctiva", choices=["conjunctiva", "cp_anemic", "palm", "fingernail"])
     parser.add_argument("--epochs", type=int, default=NUM_EPOCHS)
     parser.add_argument("--batch_size", type=int, default=BATCH_SIZE)
     parser.add_argument("--lr", type=float, default=LEARNING_RATE)

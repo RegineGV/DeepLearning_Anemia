@@ -22,7 +22,7 @@ from src.config import (
     NUM_WORKERS
 )
 from src.models.efficientnet_cbam import EfficientNetB0_CBAM
-from src.data.dataset import ConjunctivaDataset
+from src.data.dataset import get_dataset
 from src.evaluation.metrics import compute_classification_metrics, print_metrics_table
 from src.evaluation.gradcam import GradCAM
 from src.utils.visualization import plot_confusion_matrix, plot_roc_curve, plot_training_history
@@ -43,7 +43,7 @@ def evaluate_modality(modality: str = "conjunctiva"):
     model.eval()
 
     # 1. Internal Test Set Evaluation
-    test_ds = ConjunctivaDataset(split="test", use_palpebral_crop=True)
+    test_ds = get_dataset(modality, split="test")
     test_loader = DataLoader(test_ds, batch_size=BATCH_SIZE, shuffle=False, num_workers=NUM_WORKERS)
 
     all_preds, all_targets, all_probs, all_pids = [], [], [], []
@@ -102,38 +102,40 @@ def evaluate_modality(modality: str = "conjunctiva"):
     from src.data.transforms import get_eval_transforms
     eval_transform = get_eval_transforms()
 
-    splits_df = pd.read_csv(PROJECT_ROOT / "data" / "splits" / "conjunctiva_splits.csv")
-    test_rows = splits_df[splits_df["split"] == "test"].head(6)
-
-    for _, row in test_rows.iterrows():
-        pid = row["patient_id"]
-        actual_label = "Anemic" if int(row["who_anemic"]) == 1 else "Normal"
-        palp_path = row["palpebral_mask_path"]
+    num_samples = min(6, len(test_ds))
+    for i in range(num_samples):
+        row = test_ds.data.iloc[i]
+        label_val = int(row["who_anemic"])
+        actual_label = "Anemic" if label_val == 1 else "Normal"
         
-        if pd.isna(palp_path) or not Path(palp_path).exists():
-            continue
+        # Determine image path
+        if "palpebral_mask_path" in row and pd.notna(row["palpebral_mask_path"]):
+            img_path = row["palpebral_mask_path"]
+            orig_pil = Image.open(img_path)
+            bbox = orig_pil.convert("L").getbbox()
+            if bbox:
+                orig_pil = orig_pil.crop(bbox)
+        else:
+            img_path = row.get("image_path") or row.get("original_image_path")
+            orig_pil = Image.open(img_path)
 
-        orig_pil = Image.open(palp_path)
-        bbox = orig_pil.convert("L").getbbox()
-        if bbox:
-            orig_pil = orig_pil.crop(bbox)
         orig_pil = orig_pil.convert("RGB")
-
         input_tensor = eval_transform(orig_pil).unsqueeze(0).to(device)
 
         # Generate heatmap for predicted class
         with torch.enable_grad():
             heatmap = gradcam.generate_heatmap(input_tensor)
 
+        sample_name = row.get("patient_id") or row.get("subject_id") or f"sample_{i}"
         overlay_img = gradcam.overlay_heatmap(orig_pil, heatmap, alpha=0.5)
-        save_path = gradcam_dir / f"{pid}_pred_{actual_label}.png"
+        save_path = gradcam_dir / f"{sample_name}_pred_{actual_label}.png"
         overlay_img.save(save_path)
 
     print(f"Saved Grad-CAM overlays to {gradcam_dir}")
 
 def main():
     parser = argparse.ArgumentParser(description="Evaluate Trained Model and Generate Paper Artifacts")
-    parser.add_argument("--modality", type=str, default="conjunctiva", choices=["conjunctiva", "palm", "fingernail"])
+    parser.add_argument("--modality", type=str, default="conjunctiva", choices=["conjunctiva", "cp_anemic", "palm", "fingernail"])
     args = parser.parse_args()
     evaluate_modality(modality=args.modality)
 
