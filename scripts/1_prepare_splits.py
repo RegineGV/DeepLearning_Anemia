@@ -9,6 +9,7 @@ from src.data.prepare_metadata import process_eyes_defy_anemia
 from src.data.create_splits import (
     create_conjunctiva_splits,
     create_cp_anemic_splits,
+    create_merged_conjunctiva_splits,
     create_palm_splits,
     create_fingernail_splits,
 )
@@ -28,10 +29,13 @@ def main():
     print("\n>>> 2.2 Conjunctiva (CP-AnemiC Ghana)")
     create_cp_anemic_splits()
 
-    print("\n>>> 2.3 Palm (Ghana)")
+    print("\n>>> 2.3 Conjunctiva MERGED (CP-AnemiC + Eyes-Defy pool, dengan crossdomain holdout)")
+    create_merged_conjunctiva_splits()
+
+    print("\n>>> 2.4 Palm (Ghana)")
     create_palm_splits()
 
-    print("\n>>> 2.4 Fingernails (Ghana)")
+    print("\n>>> 2.5 Fingernails (Ghana)")
     create_fingernail_splits()
 
     print("\n" + "=" * 60)

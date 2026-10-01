@@ -21,6 +21,8 @@ from src.config import (
     RANDOM_SEED,
 )
 from src.utils.seed import set_seed
+from src.data.prepare_metadata import process_eyes_defy_anemia
+
 
 def create_conjunctiva_splits():
     """
@@ -29,13 +31,13 @@ def create_conjunctiva_splits():
     Also creates a cross-domain validation split (Italy vs India).
     """
     set_seed(RANDOM_SEED)
-    
+
     metadata_path = SPLITS_DIR / "eyes_defy_anemia_metadata.csv"
     if not metadata_path.exists():
         raise FileNotFoundError(f"Metadata file not found: {metadata_path}. Run prepare_metadata.py first.")
 
     df = pd.read_csv(metadata_path)
-    
+
     # Filter out samples with missing labels
     labeled_mask = df["who_anemic"].notna()
     labeled_df = df[labeled_mask].copy()
@@ -97,7 +99,7 @@ def create_conjunctiva_splits():
     print(country_summary)
 
     return combined_df
-    
+
 
 def create_cp_anemic_splits():
     """
@@ -111,15 +113,23 @@ def create_cp_anemic_splits():
 
     df_sheet = pd.read_excel(excel_path)
     records = []
+    n_corrupt = 0
     for _, row in df_sheet.iterrows():
         img_id = str(row["IMAGE_ID"]).strip()
         fname = f"{img_id}.png"
         anemic = 0 if str(row["Severity"]).strip().lower() == "non-anemic" else 1
         sub_folder = "Anemic" if anemic == 1 else "Non-anemic"
         img_path = (RAW_DATA_DIR / "cp_anemic" / sub_folder / fname).resolve()
-        
+
         if not img_path.exists():
             print(f"Warning: {img_path} not found.")
+            continue
+
+        # Dataset asli CP-AnemiC punya 1 file corrupt/kosong (0 byte) di arsipnya.
+        # Jangan ikutkan file kosong ke split, atau training akan crash saat dibuka nanti.
+        if img_path.stat().st_size == 0:
+            print(f"Warning: {img_path} kosong/corrupt (0 byte), dilewati.")
+            n_corrupt += 1
             continue
 
         records.append({
@@ -132,6 +142,9 @@ def create_cp_anemic_splits():
             "hospital": str(row["HOSPITAL"]).strip() if pd.notna(row.get("HOSPITAL")) else "Unknown",
             "who_anemic": anemic
         })
+
+    if n_corrupt > 0:
+        print(f"[CP-AnemiC] Total {n_corrupt} file corrupt/kosong dilewati.")
 
     df_cp = pd.DataFrame(records)
 
@@ -244,25 +257,39 @@ def create_fingernail_splits():
     return create_grouped_splits_for_modality("fingernail")
 
 
-def create_merged_conjunctiva_splits():
+def create_merged_conjunctiva_splits(crossdomain_holdout_ratio: float = 0.30):
     """
-    Creates stratified 70% Train / 15% Val / 15% Test split for the MERGED conjunctiva dataset
-    (Eyes-defy-anemia 218 images + CP-AnemiC 710 images = 928 images).
-    Stratified jointly by source dataset and WHO anemia status.
+    Opsi C: Membangun dataset konjungtiva gabungan dengan skema:
+      - POOL = seluruh CP-AnemiC + (1 - crossdomain_holdout_ratio) dari Eyes-defy-anemia
+               -> displit 70% Train / 15% Val / 15% Test, stratifikasi source_dataset + who_anemic
+      - HOLDOUT = sisa crossdomain_holdout_ratio dari Eyes-defy-anemia
+               -> TIDAK PERNAH masuk training/val/test apa pun, disimpan sebagai
+                  split "crossdomain_external_test" untuk mengukur generalisasi lintas populasi.
+    Stratifikasi holdout memakai composite (country + who_anemic) supaya Italy & India
+    tetap representatif di kedua sisi (pool maupun holdout).
     """
     set_seed(RANDOM_SEED)
 
-    # 1. Load Eyes-defy-anemia
-    eyes_csv = SPLITS_DIR / "conjunctiva_splits.csv"
-    if not eyes_csv.exists():
-        create_conjunctiva_splits()
-    eyes_df = pd.read_csv(eyes_csv)
-    eyes_records = []
-    for _, r in eyes_df.iterrows():
-        if pd.isna(r["who_anemic"]):
-            continue
+    # 1. Load metadata mentah Eyes-defy-anemia (belum displit)
+    eyes_meta_csv = SPLITS_DIR / "eyes_defy_anemia_metadata.csv"
+    if not eyes_meta_csv.exists():
+        process_eyes_defy_anemia()
+    eyes_df = pd.read_csv(eyes_meta_csv)
+    eyes_df = eyes_df[eyes_df["who_anemic"].notna()].copy()
+    eyes_df["who_anemic"] = eyes_df["who_anemic"].astype(int)
+
+    # 2. Pisahkan Eyes-defy: pool (ikut training) vs holdout (murni, untuk cross-domain test)
+    eyes_df["eyes_stratum"] = eyes_df["country"] + "_" + eyes_df["who_anemic"].astype(str)
+    sss_holdout = StratifiedShuffleSplit(
+        n_splits=1, test_size=crossdomain_holdout_ratio, random_state=RANDOM_SEED
+    )
+    pool_idx, holdout_idx = next(sss_holdout.split(eyes_df, eyes_df["eyes_stratum"]))
+    eyes_pool_df = eyes_df.iloc[pool_idx].copy()
+    eyes_holdout_df = eyes_df.iloc[holdout_idx].copy()
+
+    def eyes_row_to_record(r):
         img_path = r["palpebral_mask_path"] if pd.notna(r.get("palpebral_mask_path")) else r["original_image_path"]
-        eyes_records.append({
+        return {
             "patient_id": f"eyes_{r['patient_id']}",
             "source_dataset": "eyes_defy",
             "image_path": str(Path(img_path).resolve()),
@@ -270,17 +297,20 @@ def create_merged_conjunctiva_splits():
             "who_anemic": int(r["who_anemic"]),
             "hb": r.get("hgb"),
             "gender": r.get("gender"),
-            "severity": r.get("severity")
-        })
+            "severity": r.get("severity"),
+            "country": r.get("country"),
+        }
 
-    # 2. Load CP-AnemiC
+    eyes_pool_records = [eyes_row_to_record(r) for _, r in eyes_pool_df.iterrows()]
+    eyes_holdout_records = [eyes_row_to_record(r) for _, r in eyes_holdout_df.iterrows()]
+
+    # 3. Load CP-AnemiC (seluruhnya masuk pool — tidak ada holdout untuk CP-AnemiC)
     cp_csv = SPLITS_DIR / "cp_anemic_splits.csv"
     if not cp_csv.exists():
         create_cp_anemic_splits()
     cp_df = pd.read_csv(cp_csv)
-    cp_records = []
-    for _, r in cp_df.iterrows():
-        cp_records.append({
+    cp_records = [
+        {
             "patient_id": f"cp_{r['patient_id']}",
             "source_dataset": "cp_anemic",
             "image_path": str(Path(r["image_path"]).resolve()),
@@ -288,23 +318,23 @@ def create_merged_conjunctiva_splits():
             "who_anemic": int(r["who_anemic"]),
             "hb": r.get("hb"),
             "gender": r.get("gender"),
-            "severity": r.get("severity")
-        })
+            "severity": r.get("severity"),
+            "country": "Ghana",
+        }
+        for _, r in cp_df.iterrows()
+    ]
 
-    merged = pd.DataFrame(eyes_records + cp_records)
-
-    # Composite stratum: source_dataset + who_anemic
-    merged["stratum"] = merged["source_dataset"] + "_" + merged["who_anemic"].astype(str)
+    # 4. Bangun POOL (CP-AnemiC + porsi Eyes-defy) lalu split 70/15/15
+    pool_df = pd.DataFrame(cp_records + eyes_pool_records)
+    pool_df["stratum"] = pool_df["source_dataset"] + "_" + pool_df["who_anemic"].astype(str)
 
     sss1 = StratifiedShuffleSplit(n_splits=1, test_size=(VAL_RATIO + TEST_RATIO), random_state=RANDOM_SEED)
-    train_idx, temp_idx = next(sss1.split(merged, merged["stratum"]))
-
-    train_data = merged.iloc[train_idx].copy()
-    temp_data = merged.iloc[temp_idx].copy()
+    train_idx, temp_idx = next(sss1.split(pool_df, pool_df["stratum"]))
+    train_data = pool_df.iloc[train_idx].copy()
+    temp_data = pool_df.iloc[temp_idx].copy()
 
     sss2 = StratifiedShuffleSplit(n_splits=1, test_size=0.50, random_state=RANDOM_SEED)
     val_sub, test_sub = next(sss2.split(temp_data, temp_data["stratum"]))
-
     val_data = temp_data.iloc[val_sub].copy()
     test_data = temp_data.iloc[test_sub].copy()
 
@@ -312,11 +342,21 @@ def create_merged_conjunctiva_splits():
     val_data["split"] = "val"
     test_data["split"] = "test"
 
-    final_df = pd.concat([train_data, val_data, test_data]).drop(columns=["stratum"]).reset_index(drop=True)
+    # 5. Holdout Eyes-defy jadi split terpisah: "crossdomain_external_test"
+    holdout_df = pd.DataFrame(eyes_holdout_records)
+    holdout_df["split"] = "crossdomain_external_test"
+
+    final_df = (
+        pd.concat([train_data, val_data, test_data, holdout_df])
+        .drop(columns=["stratum"], errors="ignore")
+        .reset_index(drop=True)
+    )
+
     out_csv = SPLITS_DIR / "conjunctiva_merged_splits.csv"
     final_df.to_csv(out_csv, index=False)
-    print(f"\n[MERGED CONJUNCTIVA] Stratified split saved to {out_csv} ({len(final_df)} samples total)")
+    print(f"\n[MERGED CONJUNCTIVA + CROSSDOMAIN HOLDOUT] Saved to {out_csv} ({len(final_df)} rows)")
     print(final_df.groupby(["split", "source_dataset", "who_anemic"]).size().unstack(fill_value=0))
+
     return final_df
 
 
