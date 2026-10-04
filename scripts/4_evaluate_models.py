@@ -28,6 +28,24 @@ from src.evaluation.gradcam import GradCAM
 from src.utils.visualization import plot_confusion_matrix, plot_roc_curve, plot_training_history
 from src.training.trainer import get_device
 
+
+def _run_inference(model, loader, device):
+    """Helper: jalankan forward pass di satu DataLoader, kembalikan (targets, preds, probs)."""
+    all_preds, all_targets, all_probs = [], [], []
+    with torch.no_grad():
+        for images, labels, _ in loader:
+            images = images.to(device)
+            logits = model(images)
+            probs = torch.softmax(logits, dim=1)
+            preds = torch.argmax(logits, dim=1)
+
+            all_probs.extend(probs.cpu().numpy())
+            all_preds.extend(preds.cpu().numpy())
+            all_targets.extend(labels.numpy())
+
+    return np.array(all_targets), np.array(all_preds), np.array(all_probs)
+
+
 def evaluate_modality(modality: str = "conjunctiva"):
     device = get_device()
     checkpoint_path = CHECKPOINTS_DIR / modality / "best_model.pth"
@@ -46,23 +64,7 @@ def evaluate_modality(modality: str = "conjunctiva"):
     test_ds = get_dataset(modality, split="test")
     test_loader = DataLoader(test_ds, batch_size=BATCH_SIZE, shuffle=False, num_workers=NUM_WORKERS)
 
-    all_preds, all_targets, all_probs, all_pids = [], [], [], []
-
-    with torch.no_grad():
-        for images, labels, pids in test_loader:
-            images = images.to(device)
-            logits = model(images)
-            probs = torch.softmax(logits, dim=1)
-            preds = torch.argmax(logits, dim=1)
-
-            all_probs.extend(probs.cpu().numpy())
-            all_preds.extend(preds.cpu().numpy())
-            all_targets.extend(labels.numpy())
-            all_pids.extend(pids)
-
-    all_targets = np.array(all_targets)
-    all_preds = np.array(all_preds)
-    all_probs = np.array(all_probs)
+    all_targets, all_preds, all_probs = _run_inference(model, test_loader, device)
 
     metrics = compute_classification_metrics(all_targets, all_preds, all_probs)
     print_metrics_table(metrics, title=f"TEST SET PERFORMANCE - {modality.upper()}")
@@ -96,6 +98,53 @@ def evaluate_modality(modality: str = "conjunctiva"):
         loss_curve_path = curves_dir / f"{modality}_training_curves.png"
         plot_training_history(str(history_csv), output_path=str(loss_curve_path))
 
+    # 2b. Cross-Domain External Evaluation
+    # Hanya berlaku untuk modality "conjunctiva" (dataset gabungan CP-AnemiC + Eyes-defy),
+    # karena split "crossdomain_external_test" (porsi Eyes-defy yang di-holdout, tidak pernah
+    # dilihat saat training) hanya dibuat untuk modality ini. Ini mengukur generalisasi
+    # lintas populasi (Ghana pediatrik -> Italia/India dewasa) -- kontribusi utama riset.
+    if modality == "conjunctiva":
+        print("\n" + "=" * 50)
+        print("Evaluating on CROSS-DOMAIN EXTERNAL TEST (held-out Eyes-defy-anemia)...")
+        print("=" * 50)
+
+        crossdomain_ds = get_dataset(modality, split="crossdomain_external_test")
+        crossdomain_loader = DataLoader(
+            crossdomain_ds, batch_size=BATCH_SIZE, shuffle=False, num_workers=NUM_WORKERS
+        )
+
+        cd_targets, cd_preds, cd_probs = _run_inference(model, crossdomain_loader, device)
+
+        crossdomain_metrics = compute_classification_metrics(cd_targets, cd_preds, cd_probs)
+        print_metrics_table(
+            crossdomain_metrics,
+            title=f"CROSS-DOMAIN EXTERNAL TEST - {modality.upper()} (held-out Eyes-defy-anemia)"
+        )
+
+        crossdomain_metrics_df = pd.DataFrame([crossdomain_metrics])
+        crossdomain_csv = TABLES_DIR / f"{modality}_crossdomain_metrics.csv"
+        crossdomain_metrics_df.to_csv(crossdomain_csv, index=False)
+        print(f"Saved cross-domain metrics to {crossdomain_csv}")
+
+        # Confusion matrix terpisah untuk cross-domain, supaya bisa dibandingkan
+        # visual dengan confusion matrix test set biasa.
+        cd_cm_path = cm_dir / f"{modality}_crossdomain_confusion_matrix.png"
+        plot_confusion_matrix(cd_targets, cd_preds, output_path=str(cd_cm_path))
+
+        cd_roc_path = curves_dir / f"{modality}_crossdomain_roc_curve.png"
+        plot_roc_curve(cd_targets, cd_probs, output_path=str(cd_roc_path))
+
+        # Ringkasan drop performa: test biasa vs cross-domain, memudahkan baca di paper.
+        print("\n--- Ringkasan Perbandingan: Test Set Biasa vs Cross-Domain ---")
+        comparison_df = pd.DataFrame([
+            {"evaluation": "internal_test", **metrics},
+            {"evaluation": "crossdomain_external_test", **crossdomain_metrics},
+        ])
+        comparison_csv = TABLES_DIR / f"{modality}_internal_vs_crossdomain.csv"
+        comparison_df.to_csv(comparison_csv, index=False)
+        print(comparison_df[["evaluation", "accuracy", "f1_score", "roc_auc", "sensitivity", "specificity"]])
+        print(f"Saved comparison table to {comparison_csv}")
+
     # 3. Explainability: Grad-CAM Visualization on Sample Test Images
     print(f"\nGenerating Grad-CAM visual heatmaps in {gradcam_dir}...")
     gradcam = GradCAM(model=model)
@@ -107,7 +156,7 @@ def evaluate_modality(modality: str = "conjunctiva"):
         row = test_ds.data.iloc[i]
         label_val = int(row["who_anemic"])
         actual_label = "Anemic" if label_val == 1 else "Normal"
-        
+
         # Determine image path
         if "palpebral_mask_path" in row and pd.notna(row["palpebral_mask_path"]):
             img_path = row["palpebral_mask_path"]
@@ -132,6 +181,7 @@ def evaluate_modality(modality: str = "conjunctiva"):
         overlay_img.save(save_path)
 
     print(f"Saved Grad-CAM overlays to {gradcam_dir}")
+
 
 def main():
     parser = argparse.ArgumentParser(description="Evaluate Trained Model and Generate Paper Artifacts")
