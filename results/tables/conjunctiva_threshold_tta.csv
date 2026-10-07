@@ -1,0 +1,4 @@
+Versi,Threshold,n,Accuracy,Sensitivity,Specificity,F1,AUC
+"Awal (threshold 0.5, tanpa TTA)",0.5,130,0.7,0.7973,0.5714,0.7516,0.7435
+TTA + threshold dari val,0.639,130,0.7,0.7297,0.6607,0.7347,0.7372
+Cross-domain: TTA + threshold dari val,0.639,66,0.697,0.5357,0.8158,0.6,0.8177

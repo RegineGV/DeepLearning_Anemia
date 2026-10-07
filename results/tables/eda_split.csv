@@ -1,0 +1,10 @@
+Modalitas,Split,Anemia,Non-anemia,Total
+Konjungtiva,train,326,246,572
+Konjungtiva,val,69,52,121
+Konjungtiva,test,73,50,123
+Telapak Tangan,train,1782,1182,2964
+Telapak Tangan,val,390,258,648
+Telapak Tangan,test,390,258,648
+Kuku,train,1797,1185,2982
+Kuku,val,379,258,637
+Kuku,test,389,252,641

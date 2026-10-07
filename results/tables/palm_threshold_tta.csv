@@ -1,0 +1,3 @@
+Versi,Threshold,n,Accuracy,Sensitivity,Specificity,F1,AUC
+"Awal (threshold 0.5, tanpa TTA)",0.5,648,0.8056,0.7744,0.8527,0.8274,0.898
+TTA + threshold dari val,0.641,648,0.8009,0.7333,0.9031,0.816,0.9073
