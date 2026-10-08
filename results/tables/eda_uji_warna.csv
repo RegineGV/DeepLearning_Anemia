@@ -1,8 +1,8 @@
 Modalitas,Fitur,Median anemia,Median non-anemia,p-value,Beda signifikan?
-Konjungtiva,a* CIELAB (kemerahan),26.374,28.269,0.00052,Ya
-Konjungtiva,Erythema index,19.957,21.138,0.012,Ya
-Konjungtiva,Saturasi HSV,0.44,0.443,0.11,Tidak
-Konjungtiva,Kecerahan HSV,0.731,0.743,0.68,Tidak
+Konjungtiva,a* CIELAB (kemerahan),26.018,28.269,8.6e-05,Ya
+Konjungtiva,Erythema index,19.398,20.56,0.011,Ya
+Konjungtiva,Saturasi HSV,0.437,0.434,0.23,Tidak
+Konjungtiva,Kecerahan HSV,0.726,0.727,0.49,Tidak
 Telapak Tangan,a* CIELAB (kemerahan),13.288,15.316,1e-06,Ya
 Telapak Tangan,Erythema index,11.249,13.517,0.00017,Ya
 Telapak Tangan,Saturasi HSV,0.386,0.398,0.033,Ya
